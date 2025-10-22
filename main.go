@@ -577,6 +577,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql Database) er
 				IsUnlimited        bool    `bson:"is_unlimited"`
 				Limit              int     `bson:"limit"`
 			} `bson:"item"`
+			EDIInvoice             *map[string]interface{} `bson:"edi_invoice"`
 			EDIReturnInvoice       *map[string]interface{} `bson:"edi_return_invoice"`
 			EDIAttorney            *map[string]interface{} `bson:"edi_attorney"`
 			RoamingInvoice         *map[string]interface{} `bson:"roaming_invoice"`
@@ -603,9 +604,6 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql Database) er
 		chargeType := 0
 		var objectId, number string
 		var date1, date2 *time.Time
-
-		// Debug: log the charge structure to understand what we're working with
-		log.Printf("DEBUG: Processing charge %s, RoamingInvoice: %v, RoamingContract: %v", chargeID, c.RoamingInvoice != nil, c.RoamingContract != nil)
 
 		// Check for different document types and set the appropriate type
 		if c.RoamingInvoice != nil {
@@ -708,6 +706,17 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql Database) er
 			}
 			if endDate, ok := (*c.EDIAttorney)["end_date"].(time.Time); ok {
 				date2 = &endDate
+			}
+		} else if c.EDIInvoice != nil {
+			chargeType = 1 // EDIInvoiceType
+			if id, ok := (*c.EDIInvoice)["_id"].(string); ok {
+				objectId = id
+			}
+			if num, ok := (*c.EDIInvoice)["number"].(string); ok {
+				number = num
+			}
+			if date, ok := (*c.EDIInvoice)["date"].(time.Time); ok {
+				date1 = &date
 			}
 		}
 
