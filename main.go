@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"log"
+	"migrate-tool/models"
 	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -16,29 +17,34 @@ import (
 )
 
 func main() {
+
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+
 	// Flags
-	mongoURI := flag.String("mongo-uri", getEnv("mongodb://localhost:27017", "mongodb://localhost:27017"), "MongoDB connection string")
-	mongoDBName := flag.String("mongo-db", getEnv("billingService", "billingService"), "MongoDB database name")
-	mysqlUser := flag.String("mysql-user", getEnv("root", "root"), "MySQL username")
-	mysqlPass := flag.String("mysql-pass", getEnv("123", "123"), "MySQL password")
-	mysqlAddr := flag.String("mysql-addr", getEnv("127.0.0.1:3306", "127.0.0.1:3306"), "MySQL address host:port")
-	mysqlDBName := flag.String("mysql-db", getEnv("billingService", "billing_service"), "MySQL database name")
-	tz := flag.String("tz", getEnv("TZ", "UTC"), "IANA timezone, e.g. UTC or Asia/Tashkent")
-	flag.Parse()
+	mongoURI := os.Getenv("MONGO_URI")
+	mongoDBName := os.Getenv("MONGO_DB")
+	mysqlUser := os.Getenv("MYSQL_USER")
+	mysqlPass := os.Getenv("MYSQL_PASS")
+	mysqlAddr := os.Getenv("MYSQL_ADDR")
+	mysqlDBName := os.Getenv("MYSQL_DB")
+	tz := os.Getenv("TZ")
 
 	// Validate required parameters
-	if *mongoURI == "" {
+	if mongoURI == "" {
 		log.Fatal("MongoDB URI is required")
 	}
-	if *mysqlPass == "" {
+	if mysqlPass == "" {
 		log.Fatal("MySQL password is required")
 	}
 
 	log.Printf("Starting migration from MongoDB (%s/%s) to MySQL (%s@%s/%s)",
-		*mongoURI, *mongoDBName, *mysqlUser, *mysqlAddr, *mysqlDBName)
+		mongoURI, mongoDBName, mysqlUser, mysqlAddr, mysqlDBName)
 
 	// Connect to MongoDB
-	mongoClient, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(*mongoURI))
+	mongoClient, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(mongoURI))
 	if err != nil {
 		log.Fatalf("Failed to connect to MongoDB: %v", err)
 	}
@@ -48,10 +54,10 @@ func main() {
 		}
 	}()
 
-	mdb := mongoClient.Database(*mongoDBName)
+	mdb := mongoClient.Database(mongoDBName)
 
 	// Connect to MySQL
-	mysql, err := NewDatabase(*mysqlUser, *mysqlPass, *mysqlAddr, *mysqlDBName, *tz)
+	mysql, err := models.NewDatabase(mysqlUser, mysqlPass, mysqlAddr, mysqlDBName, tz)
 	if err != nil {
 		log.Fatalf("Failed to connect to MySQL: %v", err)
 	}
@@ -77,11 +83,11 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-func migrateAll(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migrateAll(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	// Migrate in dependency order
 	migrations := []struct {
 		name string
-		fn   func(context.Context, *mongo.Database, Database) error
+		fn   func(context.Context, *mongo.Database, models.Database) error
 	}{
 		{"services", migrateServices},
 		{"organizations", migrateOrganizations},
@@ -115,7 +121,7 @@ func mongoCount(ctx context.Context, db *mongo.Database, collection string) int6
 	return count
 }
 
-func mysqlCount(db Database, table string) int64 {
+func mysqlCount(db models.Database, table string) int64 {
 	var count int64
 	if err := db.GetDB().Table(table).Count(&count).Error; err != nil {
 		log.Printf("WARNING: Could not count %s: %v", table, err)
@@ -125,7 +131,7 @@ func mysqlCount(db Database, table string) int64 {
 }
 
 // checkRecordExists checks if a record with the given ID exists in MySQL
-func checkRecordExists(db Database, table, id string) bool {
+func checkRecordExists(db models.Database, table, id string) bool {
 	var count int64
 	if err := db.GetDB().Table(table).Where("id = ?", id).Count(&count).Error; err != nil {
 		log.Printf("WARNING: Could not check existence of %s with id %s: %v", table, id, err)
@@ -143,10 +149,10 @@ func validateDateTime(t time.Time) *time.Time {
 	return &t
 }
 
-func migrateServices(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migrateServices(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("services")
 	srcCount := mongoCount(ctx, mdb, "services")
-	dstBefore := mysqlCount(mysql, (&Service{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.Service{}).TableName())
 	log.Printf("[services] mongo=%d mysql_before=%d", srcCount, dstBefore)
 
 	cur, err := coll.Find(ctx, bson.M{})
@@ -159,7 +165,7 @@ func migrateServices(ctx context.Context, mdb *mongo.Database, mysql Database) e
 	moved := 0
 	skipped := 0
 	for cur.Next(ctx) {
-		var s mongoService
+		var s models.MongoService
 		if err := cur.Decode(&s); err != nil {
 			log.Printf("ERROR decode service: %v", err)
 			return err
@@ -168,12 +174,12 @@ func migrateServices(ctx context.Context, mdb *mongo.Database, mysql Database) e
 		serviceID := s.ID.Hex()
 
 		// Check if service already exists in MySQL
-		if checkRecordExists(mysql, (&Service{}).TableName(), serviceID) {
+		if checkRecordExists(mysql, (&models.Service{}).TableName(), serviceID) {
 			skipped++
 			continue
 		}
 
-		service := Service{
+		service := models.Service{
 			ID:        serviceID,
 			CreatedAt: s.CreatedAt,
 			Name:      s.Name,
@@ -187,16 +193,16 @@ func migrateServices(ctx context.Context, mdb *mongo.Database, mysql Database) e
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&Service{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.Service{}).TableName())
 	log.Printf("[services] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	return nil
 }
 
-func migrateOrganizations(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migrateOrganizations(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("organizations")
 	srcCount := mongoCount(ctx, mdb, "organizations")
-	dstBefore := mysqlCount(mysql, (&Organization{}).TableName())
-	demoUsesBefore := mysqlCount(mysql, (&OrganizationServiceDemoUses{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.Organization{}).TableName())
+	demoUsesBefore := mysqlCount(mysql, (&models.OrganizationServiceDemoUses{}).TableName())
 	log.Printf("[organizations] mongo=%d mysql_before=%d", srcCount, dstBefore)
 	log.Printf("[service_demo_uses] mysql_before=%d", demoUsesBefore)
 
@@ -211,7 +217,7 @@ func migrateOrganizations(ctx context.Context, mdb *mongo.Database, mysql Databa
 	skipped := 0
 	demoUsesMoved := 0
 	for cur.Next(ctx) {
-		var o mongoOrganization
+		var o models.MongoOrganization
 		if err := cur.Decode(&o); err != nil {
 			log.Printf("ERROR decode organization: %v", err)
 			return err
@@ -220,11 +226,11 @@ func migrateOrganizations(ctx context.Context, mdb *mongo.Database, mysql Databa
 		orgID := o.ID.Hex()
 
 		// Check if organization already exists in MySQL
-		if checkRecordExists(mysql, (&Organization{}).TableName(), orgID) {
+		if checkRecordExists(mysql, (&models.Organization{}).TableName(), orgID) {
 			skipped++
 			// Still migrate service demo uses for existing organizations
 			for _, s := range o.ServiceDemoUses {
-				demo := OrganizationServiceDemoUses{
+				demo := models.OrganizationServiceDemoUses{
 					OrganizationId: orgID,
 					ServiceCode:    s.Code,
 					UsedAt:         o.CreatedAt,
@@ -238,7 +244,7 @@ func migrateOrganizations(ctx context.Context, mdb *mongo.Database, mysql Databa
 			continue
 		}
 
-		org := Organization{
+		org := models.Organization{
 			ID:        orgID,
 			CreatedAt: o.CreatedAt,
 			UpdatedAt: o.UpdatedAt,
@@ -276,7 +282,7 @@ func migrateOrganizations(ctx context.Context, mdb *mongo.Database, mysql Databa
 
 		// Migrate service demo uses
 		for _, s := range o.ServiceDemoUses {
-			demo := OrganizationServiceDemoUses{
+			demo := models.OrganizationServiceDemoUses{
 				OrganizationId: orgID,
 				ServiceCode:    s.Code,
 				UsedAt:         o.CreatedAt,
@@ -291,19 +297,19 @@ func migrateOrganizations(ctx context.Context, mdb *mongo.Database, mysql Databa
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&Organization{}).TableName())
-	demoUsesAfter := mysqlCount(mysql, (&OrganizationServiceDemoUses{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.Organization{}).TableName())
+	demoUsesAfter := mysqlCount(mysql, (&models.OrganizationServiceDemoUses{}).TableName())
 	log.Printf("[organizations] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	log.Printf("[service_demo_uses] moved=%d mysql_after=%d", demoUsesMoved, demoUsesAfter)
 	return nil
 }
 
-func migratePackages(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migratePackages(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("packages")
 	srcCount := mongoCount(ctx, mdb, "packages")
-	dstBefore := mysqlCount(mysql, (&Package{}).TableName())
-	itemsBefore := mysqlCount(mysql, (&PackageItem{}).TableName())
-	bonusBefore := mysqlCount(mysql, (&PackageActivationBonusPackage{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.Package{}).TableName())
+	itemsBefore := mysqlCount(mysql, (&models.PackageItem{}).TableName())
+	bonusBefore := mysqlCount(mysql, (&models.PackageActivationBonusPackage{}).TableName())
 	log.Printf("[packages] mongo=%d mysql_before=%d", srcCount, dstBefore)
 	log.Printf("[package_items] mysql_before=%d", itemsBefore)
 	log.Printf("[package_activation_bonus_packages] mysql_before=%d", bonusBefore)
@@ -320,7 +326,7 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql Database) e
 	itemsMoved := 0
 	bonusMoved := 0
 	for cur.Next(ctx) {
-		var p mongoPackage
+		var p models.MongoPackage
 		if err := cur.Decode(&p); err != nil {
 			log.Printf("ERROR decode package: %v", err)
 			return err
@@ -329,11 +335,11 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql Database) e
 		pkgID := p.ID.Hex()
 
 		// Check if package already exists in MySQL
-		if checkRecordExists(mysql, (&Package{}).TableName(), pkgID) {
+		if checkRecordExists(mysql, (&models.Package{}).TableName(), pkgID) {
 			skipped++
 			// Still migrate package items and bonus packages for existing packages
 			for _, item := range p.Items {
-				pkgItem := PackageItem{
+				pkgItem := models.PackageItem{
 					PackageId:          pkgID,
 					Name:               item.Name,
 					Code:               item.Code,
@@ -351,7 +357,7 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql Database) e
 			}
 
 			for _, bonus := range p.OnActivationBonusPackages {
-				bonusPkg := PackageActivationBonusPackage{
+				bonusPkg := models.PackageActivationBonusPackage{
 					PackageId:      pkgID,
 					BonusPackageId: bonus.ID.Hex(),
 				}
@@ -364,7 +370,7 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql Database) e
 			continue
 		}
 
-		pkg := Package{
+		pkg := models.Package{
 			ID:                          pkgID,
 			CreatedAt:                   p.CreatedAt,
 			IsDeleted:                   p.IsDeleted,
@@ -386,7 +392,7 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql Database) e
 
 		// Migrate package items
 		for _, item := range p.Items {
-			pkgItem := PackageItem{
+			pkgItem := models.PackageItem{
 				PackageId:          pkgID,
 				Name:               item.Name,
 				Code:               item.Code,
@@ -405,7 +411,7 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql Database) e
 
 		// Migrate activation bonus packages
 		for _, bonus := range p.OnActivationBonusPackages {
-			bonusPkg := PackageActivationBonusPackage{
+			bonusPkg := models.PackageActivationBonusPackage{
 				PackageId:      pkgID,
 				BonusPackageId: bonus.ID.Hex(),
 			}
@@ -419,20 +425,20 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql Database) e
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&Package{}).TableName())
-	itemsAfter := mysqlCount(mysql, (&PackageItem{}).TableName())
-	bonusAfter := mysqlCount(mysql, (&PackageActivationBonusPackage{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.Package{}).TableName())
+	itemsAfter := mysqlCount(mysql, (&models.PackageItem{}).TableName())
+	bonusAfter := mysqlCount(mysql, (&models.PackageActivationBonusPackage{}).TableName())
 	log.Printf("[packages] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	log.Printf("[package_items] moved=%d mysql_after=%d", itemsMoved, itemsAfter)
 	log.Printf("[package_activation_bonus_packages] moved=%d mysql_after=%d", bonusMoved, bonusAfter)
 	return nil
 }
 
-func migrateBoughtPackages(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migrateBoughtPackages(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("boughtPackages")
 	srcCount := mongoCount(ctx, mdb, "boughtPackages")
-	dstBefore := mysqlCount(mysql, (&BoughtPackage{}).TableName())
-	itemsBefore := mysqlCount(mysql, (&BoughtPackageItem{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.BoughtPackage{}).TableName())
+	itemsBefore := mysqlCount(mysql, (&models.BoughtPackageItem{}).TableName())
 	log.Printf("[bought-packages] mongo=%d mysql_before=%d", srcCount, dstBefore)
 	log.Printf("[bought-package-items] mysql_before=%d", itemsBefore)
 
@@ -483,12 +489,12 @@ func migrateBoughtPackages(ctx context.Context, mdb *mongo.Database, mysql Datab
 		boughtPkgID := bp.ID.Hex()
 
 		// Check if bought-package already exists in MySQL
-		if checkRecordExists(mysql, (&BoughtPackage{}).TableName(), boughtPkgID) {
+		if checkRecordExists(mysql, (&models.BoughtPackage{}).TableName(), boughtPkgID) {
 			skipped++
 			continue
 		}
 
-		boughtPkg := BoughtPackage{
+		boughtPkg := models.BoughtPackage{
 			ID:             boughtPkgID,
 			OrganizationId: bp.Organization.ID.Hex(),
 			PackageId:      bp.Package.ID.Hex(),
@@ -508,7 +514,7 @@ func migrateBoughtPackages(ctx context.Context, mdb *mongo.Database, mysql Datab
 		// Migrate package items for this bought package
 		for _, item := range bp.Package.PackageItems {
 			boughtPkgItemID := primitive.NewObjectID().Hex()
-			boughtPkgItem := BoughtPackageItem{
+			boughtPkgItem := models.BoughtPackageItem{
 				ID:                 boughtPkgItemID,
 				BoughtPackageId:    boughtPkgID,
 				Name:               item.Name,
@@ -528,17 +534,17 @@ func migrateBoughtPackages(ctx context.Context, mdb *mongo.Database, mysql Datab
 		}
 	}
 
-	dstAfter := mysqlCount(mysql, (&BoughtPackage{}).TableName())
-	itemsAfter := mysqlCount(mysql, (&BoughtPackageItem{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.BoughtPackage{}).TableName())
+	itemsAfter := mysqlCount(mysql, (&models.BoughtPackageItem{}).TableName())
 	log.Printf("[bought-packages] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	log.Printf("[bought-package-items] moved=%d mysql_after=%d", itemsMoved, itemsAfter)
 	return nil
 }
 
-func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("charges")
 	srcCount := mongoCount(ctx, mdb, "charges")
-	dstBefore := mysqlCount(mysql, (&Charge{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.Charge{}).TableName())
 	log.Printf("[charges] mongo=%d mysql_before=%d", srcCount, dstBefore)
 
 	cur, err := coll.Find(ctx, bson.M{})
@@ -595,7 +601,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql Database) er
 		chargeID := c.ID.Hex()
 
 		// Check if charge already exists in MySQL
-		if checkRecordExists(mysql, (&Charge{}).TableName(), chargeID) {
+		if checkRecordExists(mysql, (&models.Charge{}).TableName(), chargeID) {
 			skipped++
 			continue
 		}
@@ -725,7 +731,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql Database) er
 			date1 = &c.CreatedAt
 		}
 
-		charge := Charge{
+		charge := models.Charge{
 			ID:                    chargeID,
 			CreatedAt:             c.CreatedAt,
 			IsDeleted:             c.IsDeleted,
@@ -758,15 +764,15 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql Database) er
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&Charge{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.Charge{}).TableName())
 	log.Printf("[charges] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	return nil
 }
 
-func migratePayments(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migratePayments(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("payments")
 	srcCount := mongoCount(ctx, mdb, "payments")
-	dstBefore := mysqlCount(mysql, (&Payment{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.Payment{}).TableName())
 	log.Printf("[payments] mongo=%d mysql_before=%d", srcCount, dstBefore)
 
 	cur, err := coll.Find(ctx, bson.M{})
@@ -804,12 +810,12 @@ func migratePayments(ctx context.Context, mdb *mongo.Database, mysql Database) e
 		paymentID := p.ID.Hex()
 
 		// Check if payment already exists in MySQL
-		if checkRecordExists(mysql, (&Payment{}).TableName(), paymentID) {
+		if checkRecordExists(mysql, (&models.Payment{}).TableName(), paymentID) {
 			skipped++
 			continue
 		}
 
-		payment := Payment{
+		payment := models.Payment{
 			ID:                paymentID,
 			CreatedAt:         p.CreatedAt,
 			Amount:            p.Amount,
@@ -826,15 +832,15 @@ func migratePayments(ctx context.Context, mdb *mongo.Database, mysql Database) e
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&Payment{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.Payment{}).TableName())
 	log.Printf("[payments] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	return nil
 }
 
-func migratePaymeTransactions(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migratePaymeTransactions(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("paymeTransactions")
 	srcCount := mongoCount(ctx, mdb, "paymeTransactions")
-	dstBefore := mysqlCount(mysql, (&PaymeTransaction{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.PaymeTransaction{}).TableName())
 	log.Printf("[payme-transactions] mongo=%d mysql_before=%d", srcCount, dstBefore)
 
 	cur, err := coll.Find(ctx, bson.M{})
@@ -872,7 +878,7 @@ func migratePaymeTransactions(ctx context.Context, mdb *mongo.Database, mysql Da
 		paymeTransactionID := pt.ID.Hex()
 
 		// Check if payme-transaction already exists in MySQL
-		if checkRecordExists(mysql, (&PaymeTransaction{}).TableName(), paymeTransactionID) {
+		if checkRecordExists(mysql, (&models.PaymeTransaction{}).TableName(), paymeTransactionID) {
 			skipped++
 			continue
 		}
@@ -891,7 +897,7 @@ func migratePaymeTransactions(ctx context.Context, mdb *mongo.Database, mysql Da
 			}
 		}
 
-		paymeTransaction := PaymeTransaction{
+		paymeTransaction := models.PaymeTransaction{
 			ID:                 paymeTransactionID,
 			CreatedAt:          pt.CreatedAt,
 			PaymeTransactionID: pt.PaymeTransactionID,
@@ -922,15 +928,15 @@ func migratePaymeTransactions(ctx context.Context, mdb *mongo.Database, mysql Da
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&PaymeTransaction{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.PaymeTransaction{}).TableName())
 	log.Printf("[payme-transactions] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	return nil
 }
 
-func migrateOrganizationBalanceBindings(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migrateOrganizationBalanceBindings(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("organizationBalanceBindings")
 	srcCount := mongoCount(ctx, mdb, "organizationBalanceBindings")
-	dstBefore := mysqlCount(mysql, (&OrganizationBalanceBinding{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.OrganizationBalanceBinding{}).TableName())
 	log.Printf("[organization-balance-bindings] mongo=%d mysql_before=%d", srcCount, dstBefore)
 
 	cur, err := coll.Find(ctx, bson.M{})
@@ -967,12 +973,12 @@ func migrateOrganizationBalanceBindings(ctx context.Context, mdb *mongo.Database
 		orgBalanceBindingID := obb.ID.Hex()
 
 		// Check if organization-balance-binding already exists in MySQL
-		if checkRecordExists(mysql, (&OrganizationBalanceBinding{}).TableName(), orgBalanceBindingID) {
+		if checkRecordExists(mysql, (&models.OrganizationBalanceBinding{}).TableName(), orgBalanceBindingID) {
 			skipped++
 			continue
 		}
 
-		orgBalanceBinding := OrganizationBalanceBinding{
+		orgBalanceBinding := models.OrganizationBalanceBinding{
 			ID:        orgBalanceBindingID,
 			CreatedAt: obb.CreatedAt,
 			DeletedAt: func() *time.Time {
@@ -995,15 +1001,15 @@ func migrateOrganizationBalanceBindings(ctx context.Context, mdb *mongo.Database
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&OrganizationBalanceBinding{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.OrganizationBalanceBinding{}).TableName())
 	log.Printf("[organization-balance-bindings] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	return nil
 }
 
-func migrateCreditUpdates(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migrateCreditUpdates(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("creditUpdates")
 	srcCount := mongoCount(ctx, mdb, "creditUpdates")
-	dstBefore := mysqlCount(mysql, (&CreditUpdates{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.CreditUpdates{}).TableName())
 	log.Printf("[credit-updates] mongo=%d mysql_before=%d", srcCount, dstBefore)
 
 	cur, err := coll.Find(ctx, bson.M{})
@@ -1039,12 +1045,12 @@ func migrateCreditUpdates(ctx context.Context, mdb *mongo.Database, mysql Databa
 		creditUpdateID := cu.ID.Hex()
 
 		// Check if credit-update already exists in MySQL
-		if checkRecordExists(mysql, (&CreditUpdates{}).TableName(), creditUpdateID) {
+		if checkRecordExists(mysql, (&models.CreditUpdates{}).TableName(), creditUpdateID) {
 			skipped++
 			continue
 		}
 
-		creditUpdate := CreditUpdates{
+		creditUpdate := models.CreditUpdates{
 			ID:             creditUpdateID,
 			CreatedAt:      cu.CreatedAt,
 			OrganizationID: cu.Organization.ID.Hex(),
@@ -1059,15 +1065,15 @@ func migrateCreditUpdates(ctx context.Context, mdb *mongo.Database, mysql Databa
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&CreditUpdates{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.CreditUpdates{}).TableName())
 	log.Printf("[credit-updates] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	return nil
 }
 
-func migrateBankPaymentAutoApplyErrors(ctx context.Context, mdb *mongo.Database, mysql Database) error {
+func migrateBankPaymentAutoApplyErrors(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
 	coll := mdb.Collection("bankPaymentsAutoApplyErrors")
 	srcCount := mongoCount(ctx, mdb, "bankPaymentsAutoApplyErrors")
-	dstBefore := mysqlCount(mysql, (&BankPaymentAutoApplyError{}).TableName())
+	dstBefore := mysqlCount(mysql, (&models.BankPaymentAutoApplyError{}).TableName())
 	log.Printf("[bank-payments-auto-apply-errors] mongo=%d mysql_before=%d", srcCount, dstBefore)
 
 	cur, err := coll.Find(ctx, bson.M{})
@@ -1099,12 +1105,12 @@ func migrateBankPaymentAutoApplyErrors(ctx context.Context, mdb *mongo.Database,
 		bankPaymentAutoApplyErrorID := bpae.ID.Hex()
 
 		// Check if bank-payment-auto-apply-error already exists in MySQL
-		if checkRecordExists(mysql, (&BankPaymentAutoApplyError{}).TableName(), bankPaymentAutoApplyErrorID) {
+		if checkRecordExists(mysql, (&models.BankPaymentAutoApplyError{}).TableName(), bankPaymentAutoApplyErrorID) {
 			skipped++
 			continue
 		}
 
-		bankPaymentAutoApplyError := BankPaymentAutoApplyError{
+		bankPaymentAutoApplyError := models.BankPaymentAutoApplyError{
 			ID:            bankPaymentAutoApplyErrorID,
 			CreatedAt:     bpae.CreatedAt,
 			ErrorMessage:  bpae.ErrorMessage,
@@ -1123,7 +1129,7 @@ func migrateBankPaymentAutoApplyErrors(ctx context.Context, mdb *mongo.Database,
 		moved++
 	}
 
-	dstAfter := mysqlCount(mysql, (&BankPaymentAutoApplyError{}).TableName())
+	dstAfter := mysqlCount(mysql, (&models.BankPaymentAutoApplyError{}).TableName())
 	log.Printf("[bank-payments-auto-apply-errors] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
 	return nil
 }
