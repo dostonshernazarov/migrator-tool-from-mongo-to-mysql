@@ -68,6 +68,7 @@ type Package struct {
 func (Package) TableName() string { return "packages" }
 
 type PackageItem struct {
+	ID                 string  `gorm:"primaryKey;column:id;size:36;not null"`
 	PackageId          string  `gorm:"column:package_id;size:36;not null"`
 	Name               string  `gorm:"column:name;size:255;not null"`
 	Code               int     `gorm:"column:code;not null"`
@@ -226,6 +227,13 @@ type MongoOrganization struct {
 		Number string     `bson:"number"`
 		Date   *time.Time `bson:"date"`
 	} `bson:"offer_info"`
+	ActivePackages []struct {
+		ID           string       `bson:"_id, omitempty"`
+		BoughtAt     time.Time    `bson:"bought_at"`
+		ExpiresAt    time.Time    `bson:"expires_at"`
+		IsAutoExtend bool         `bson:"is_auto_extend"`
+		Package      MongoPackage `bson:"package"`
+	} `bson:"active_packages"`
 	ServiceDemoUses []struct {
 		ID   primitive.ObjectID `bson:"_id"`
 		Name string             `bson:"name"`

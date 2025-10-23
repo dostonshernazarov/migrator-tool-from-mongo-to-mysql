@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -99,6 +100,7 @@ func migrateAll(ctx context.Context, mdb *mongo.Database, mysql models.Database)
 		{"organization-balance-bindings", migrateOrganizationBalanceBindings},
 		{"credit-updates", migrateCreditUpdates},
 		{"bank-payments-auto-apply-errors", migrateBankPaymentAutoApplyErrors},
+		{"bought-package-is-auto-extend-column", migrateBoughtPackageIsAutoExtendColumn},
 	}
 
 	for _, migration := range migrations {
@@ -1131,5 +1133,52 @@ func migrateBankPaymentAutoApplyErrors(ctx context.Context, mdb *mongo.Database,
 
 	dstAfter := mysqlCount(mysql, (&models.BankPaymentAutoApplyError{}).TableName())
 	log.Printf("[bank-payments-auto-apply-errors] moved=%d skipped=%d mysql_after=%d", moved, skipped, dstAfter)
+	return nil
+}
+
+func migrateBoughtPackageIsAutoExtendColumn(ctx context.Context, mdb *mongo.Database, mysql models.Database) error {
+	coll := mdb.Collection("organizations")
+	// count bought packages where is_auto_extend is true
+	var count int64
+	if err := mysql.GetDB().Table("bought_packages").Where("is_auto_extend = ?", true).Count(&count).Error; err != nil {
+		log.Printf("WARNING: Could not count bought packages where is_auto_extend is true: %v", err)
+		return err
+	}
+	log.Printf("[bought-packages] mysql_before=%d", count)
+
+	cur, err := coll.Find(ctx, bson.M{})
+	if err != nil {
+		return err
+	}
+	defer cur.Close(ctx)
+
+	db := mysql.GetDB()
+	moved := 0
+
+	// collect all active packages id where is_auto_extend is true and update bought packages is_auto_extend column to true
+	activePackagesIDCollectionMap := make(map[string]string)
+	for cur.Next(ctx) {
+		var o models.MongoOrganization
+		if err := cur.Decode(&o); err != nil {
+			log.Printf("ERROR decode organization: %v", err)
+			return err
+		}
+
+		for _, ap := range o.ActivePackages {
+			if ap.IsAutoExtend {
+				activePackagesIDCollectionMap[uuid.NewString()] = ap.ID
+			}
+		}
+	}
+
+	// update bought packages is_auto_extend column to true where package_id is in activePackagesIDCollectionMap
+	for _, id := range activePackagesIDCollectionMap {
+		if err := db.Table("bought_packages").Where("id = ?", id).Update("is_auto_extend", true).Error; err != nil {
+			log.Printf("ERROR update bought-packages is_auto_extend column: %v", err)
+			return err
+		}
+		moved++
+	}
+	log.Printf("[bought-packages] moved=%d", moved)
 	return nil
 }
