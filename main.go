@@ -17,6 +17,22 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+const (
+	EDIInvoiceType                 = 1
+	EDIReturnInvoiceType           = 2
+	EDIAttorneyType                = 3
+	RoamingInvoiceType             = 4
+	RoamingHybridInvoiceType       = 5
+	RoamingConstructionInvoiceType = 6
+	RoamingWaybillType             = 7
+	RoamingContractType            = 8
+	RoamingEmpowermentType         = 9
+	RoamingVerificationActType     = 10
+	RoamingActType                 = 11
+	RoamingWaybillV2Type           = 12
+	FreeFormDocumentType           = 13
+)
+
 func main() {
 
 	err := godotenv.Load()
@@ -585,15 +601,19 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				IsUnlimited        bool    `bson:"is_unlimited"`
 				Limit              int     `bson:"limit"`
 			} `bson:"item"`
-			EDIInvoice             *map[string]interface{} `bson:"edi_invoice"`
-			EDIReturnInvoice       *map[string]interface{} `bson:"edi_return_invoice"`
-			EDIAttorney            *map[string]interface{} `bson:"edi_attorney"`
-			RoamingInvoice         *map[string]interface{} `bson:"roaming_invoice"`
-			RoamingContract        *map[string]interface{} `bson:"roaming_contract"`
-			RoamingWaybill         *map[string]interface{} `bson:"roaming_waybill"`
-			RoamingAct             *map[string]interface{} `bson:"roaming_act"`
-			RoamingVerificationAct *map[string]interface{} `bson:"roaming_verification_act"`
-			RoamingEmpowerment     *map[string]interface{} `bson:"roaming_empowerment"`
+			EDIInvoice                *map[string]interface{} `bson:"edi_invoice"`
+			EDIReturnInvoice          *map[string]interface{} `bson:"edi_return_invoice"`
+			EDIAttorney               *map[string]interface{} `bson:"edi_attorney"`
+			RoamingInvoice            *map[string]interface{} `bson:"roaming_invoice"`
+			RoamingContract           *map[string]interface{} `bson:"roaming_contract"`
+			RoamingWaybill            *map[string]interface{} `bson:"roaming_waybill"`
+			RoamingAct                *map[string]interface{} `bson:"roaming_act"`
+			RoamingVerificationAct    *map[string]interface{} `bson:"roaming_verification_act"`
+			RoamingEmpowerment        *map[string]interface{} `bson:"roaming_empowerment"`
+			RoamingConstructorInvoice *map[string]interface{} `bson:"roaming_constructor_invoice"`
+			RoamingWaybillV2          *map[string]interface{} `bson:"roaming_waybill_v2"`
+			FreeFormDocument          *map[string]interface{} `bson:"free_form_document"`
+			RoamingHybridInvoice      *map[string]interface{} `bson:"roaming_hybrid_invoice"`
 		}
 		if err := cur.Decode(&c); err != nil {
 			log.Printf("ERROR decode charge: %v", err)
@@ -615,7 +635,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 
 		// Check for different document types and set the appropriate type
 		if c.RoamingInvoice != nil {
-			chargeType = 3 // RoamingInvoiceType
+			chargeType = RoamingInvoiceType
 			if id, ok := (*c.RoamingInvoice)["_id"].(string); ok {
 				objectId = id
 			}
@@ -633,7 +653,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				}
 			}
 		} else if c.RoamingContract != nil {
-			chargeType = 7 // RoamingContractType
+			chargeType = RoamingContractType
 			if id, ok := (*c.RoamingContract)["_id"].(string); ok {
 				objectId = id
 			}
@@ -644,7 +664,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				date1 = &date
 			}
 		} else if c.RoamingWaybill != nil {
-			chargeType = 10 // RoamingWaybillType
+			chargeType = RoamingWaybillType
 			if id, ok := (*c.RoamingWaybill)["_id"].(string); ok {
 				objectId = id
 			}
@@ -655,7 +675,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				date1 = &date
 			}
 		} else if c.RoamingAct != nil {
-			chargeType = 9 // RoamingActType
+			chargeType = RoamingActType
 			if id, ok := (*c.RoamingAct)["_id"].(string); ok {
 				objectId = id
 			}
@@ -666,7 +686,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				date1 = &date
 			}
 		} else if c.RoamingVerificationAct != nil {
-			chargeType = 8 // RoamingVerificationActType
+			chargeType = RoamingVerificationActType
 			if id, ok := (*c.RoamingVerificationAct)["_id"].(string); ok {
 				objectId = id
 			}
@@ -677,7 +697,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				date1 = &date
 			}
 		} else if c.RoamingEmpowerment != nil {
-			chargeType = 11 // RoamingEmpowermentType
+			chargeType = RoamingEmpowermentType
 			if id, ok := (*c.RoamingEmpowerment)["_id"].(string); ok {
 				objectId = id
 			}
@@ -691,7 +711,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				date2 = &endDate
 			}
 		} else if c.EDIReturnInvoice != nil {
-			chargeType = 2 // EDIReturnInvoiceType
+			chargeType = EDIReturnInvoiceType
 			if id, ok := (*c.EDIReturnInvoice)["_id"].(string); ok {
 				objectId = id
 			}
@@ -702,7 +722,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				date1 = &date
 			}
 		} else if c.EDIAttorney != nil {
-			chargeType = 4 // EDIAttorneyType
+			chargeType = EDIAttorneyType
 			if id, ok := (*c.EDIAttorney)["_id"].(string); ok {
 				objectId = id
 			}
@@ -716,7 +736,7 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 				date2 = &endDate
 			}
 		} else if c.EDIInvoice != nil {
-			chargeType = 1 // EDIInvoiceType
+			chargeType = EDIInvoiceType
 			if id, ok := (*c.EDIInvoice)["_id"].(string); ok {
 				objectId = id
 			}
@@ -726,8 +746,51 @@ func migrateCharges(ctx context.Context, mdb *mongo.Database, mysql models.Datab
 			if date, ok := (*c.EDIInvoice)["date"].(time.Time); ok {
 				date1 = &date
 			}
+		} else if c.RoamingConstructorInvoice != nil {
+			chargeType = RoamingConstructionInvoiceType
+			if id, ok := (*c.RoamingConstructorInvoice)["_id"].(string); ok {
+				objectId = id
+			}
+			if num, ok := (*c.RoamingConstructorInvoice)["number"].(string); ok {
+				number = num
+			}
+			if date, ok := (*c.RoamingConstructorInvoice)["date"].(time.Time); ok {
+				date1 = &date
+			}
+		} else if c.RoamingWaybillV2 != nil {
+			chargeType = RoamingWaybillV2Type
+			if id, ok := (*c.RoamingWaybillV2)["_id"].(string); ok {
+				objectId = id
+			}
+			if num, ok := (*c.RoamingWaybillV2)["number"].(string); ok {
+				number = num
+			}
+			if date, ok := (*c.RoamingWaybillV2)["date"].(time.Time); ok {
+				date1 = &date
+			}
+		} else if c.FreeFormDocument != nil {
+			chargeType = FreeFormDocumentType
+			if id, ok := (*c.FreeFormDocument)["_id"].(string); ok {
+				objectId = id
+			}
+			if num, ok := (*c.FreeFormDocument)["number"].(string); ok {
+				number = num
+			}
+			if date, ok := (*c.FreeFormDocument)["date"].(time.Time); ok {
+				date1 = &date
+			}
+		} else if c.RoamingHybridInvoice != nil {
+			chargeType = RoamingHybridInvoiceType
+			if id, ok := (*c.RoamingHybridInvoice)["_id"].(string); ok {
+				objectId = id
+			}
+			if num, ok := (*c.RoamingHybridInvoice)["number"].(string); ok {
+				number = num
+			}
+			if date, ok := (*c.RoamingHybridInvoice)["date"].(time.Time); ok {
+				date1 = &date
+			}
 		}
-
 		// If no dates were found from document fields, use created_at as fallback
 		if date1 == nil {
 			date1 = &c.CreatedAt
