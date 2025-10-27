@@ -357,7 +357,9 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql models.Data
 			skipped++
 			// Still migrate package items and bonus packages for existing packages
 			for _, item := range p.Items {
+				pkgItemID := primitive.NewObjectID().Hex()
 				pkgItem := models.PackageItem{
+					ID:                 pkgItemID,
 					PackageId:          pkgID,
 					Name:               item.Name,
 					Code:               item.Code,
@@ -410,7 +412,9 @@ func migratePackages(ctx context.Context, mdb *mongo.Database, mysql models.Data
 
 		// Migrate package items
 		for _, item := range p.Items {
+			pkgItemID := primitive.NewObjectID().Hex()
 			pkgItem := models.PackageItem{
+				ID:                 pkgItemID,
 				PackageId:          pkgID,
 				Name:               item.Name,
 				Code:               item.Code,
