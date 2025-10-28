@@ -890,6 +890,7 @@ func migratePayments(ctx context.Context, mdb *mongo.Database, mysql models.Data
 			Amount:            p.Amount,
 			OrganizationID:    p.Organization.ID.Hex(),
 			AccountID:         p.Account.ID.Hex(),
+			AccountUsername:   p.Account.Username,
 			Method:            p.Method,
 			BankTransactionID: p.BankTransactionID,
 		}

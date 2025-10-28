@@ -138,7 +138,8 @@ type Payment struct {
 	CreatedAt         time.Time `gorm:"column:created_at;not null"`
 	Amount            float64   `gorm:"column:amount;not null"`
 	OrganizationID    string    `gorm:"column:organization_id;size:36;not null"`
-	AccountID         string    `gorm:"column:account_id;size:36;not null"`
+	AccountID         string    `gorm:"column:account_id;size:36"`
+	AccountUsername   string    `gorm:"column:account_username;size:255"`
 	Method            int       `gorm:"column:method;not null"`
 	BankTransactionID *string   `gorm:"column:bank_transaction_id;size:36"`
 }
